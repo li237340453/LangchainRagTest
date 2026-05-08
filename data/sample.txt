@@ -1,0 +1,60 @@
+LangChain是一个用于开发由语言模型驱动的应用程序的框架。
+
+LangChain主要拥有两个能力：
+1. 可以将LLM模型与外部数据源进行连接
+2. 允许与LLM模型进行交互
+
+RAG（Retrieval-Augmented Generation）是检索增强生成的缩写。RAG技术最早在2020年由Facebook的研究人员提出。
+
+RAG系统通过向量检索+LLM生成的双轮驱动架构，解决传统LLM的三大痛点：
+1. 知识滞后：实时接入最新数据
+2. 内容幻觉：基于检索结果生成保证事实性
+3. 私有数据缺失：支持企业知识库集成
+
+RAG的核心流程包括：
+1. 数据摄取：加载PDF、Word、网页等格式文件
+2. 文本分块：将长文本拆分为500-1000字的语义片段
+3. 向量索引：通过Embedding模型生成向量存储到数据库
+4. 检索增强：根据用户问题检索相关文档片段
+5. 生成优化：将检索结果与问题结合生成最终回答
+
+LangChain的核心组件包括：
+- Document Loader：文档加载器
+- Text Splitter：文本分割器
+- Embeddings：嵌入模型
+- Vector Store：向量数据库
+- Retriever：检索器
+- Chain：链
+- Memory：记忆模块
+- Agent：代理
+
+常用的向量数据库有：
+- FAISS：Facebook AI Similarity Search，本地向量数据库
+- Chroma：开源向量数据库
+- Pinecone：云端向量数据库
+- Qdrant：开源向量搜索引擎
+- Milvus：开源向量数据库
+
+常用的Embedding模型有：
+- BAAI/bge-large-zh-v1.5：中文BGE大模型
+- text-embedding-ada-002：OpenAI的Embedding模型
+- m3e-base：国产Embedding模型
+
+常用的LLM模型有：
+- GPT-4：OpenAI的大型语言模型
+- Claude：Anthropic的大型语言模型
+- Qwen：阿里云通义千问
+- ChatGLM：智谱AI的ChatGLM系列
+- InternLM：上海人工智能实验室的书生大模型
+- Llama：Meta的开源大模型
+
+Ollama是一个本地大模型部署工具，可以方便地在本地运行各种开源大模型。
+
+常见的RAG优化策略包括：
+1. 混合检索：结合向量检索和关键词检索
+2. 重排序：对检索结果进行重新排序
+3. 查询扩展：对用户问题进行扩展和改写
+4. 上下文压缩：压缩检索到的上下文
+5. 迭代检索：多次检索以获得更相关的结果
+
+LangChain Expression Language (LCEL) 是LangChain的表达式语言，用于将各种组件串联成链。
