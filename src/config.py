@@ -18,7 +18,7 @@ EMBEDDING_MODEL = "BAAI/bge-large-zh-v1.5"
 EMBEDDING_DEVICE = "cpu"  # 可选: "cpu", "cuda"
 
 # LLM配置 (使用Ollama本地模型)
-LLM_MODEL_NAME = "qwen2:0.5b"  # 可根据实际部署的模型修改
+LLM_MODEL_NAME = "qwen2.5:14b"  # 可根据实际部署的模型修改
 LLM_BASE_URL = "http://localhost:11434"
 LLM_TEMPERATURE = 0.6
 LLM_MAX_TOKENS = 1000

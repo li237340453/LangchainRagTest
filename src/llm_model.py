@@ -1,147 +1,182 @@
 """LLM模型模块 - 支持本地Ollama和云端API"""
-from typing import Optional, List, Dict, Any
-from langchain_community.chat_models import ChatOllama
-from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, SystemMessage, BaseMessage
+from typing import Optional, List, Dict, Any, Union
+from langchain_core.language_models import BaseLanguageModel
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.outputs import GenerationChunk, ChatResult, ChatGeneration
+from langchain_core.callbacks import CallbackManagerForLLMRun
+from pydantic import Field
 import logging
 
 logger = logging.getLogger(__name__)
 
 
-class BaseLLM:
-    """LLM基类"""
-
-    def invoke(self, messages: List[BaseMessage]) -> str:
-        """调用LLM"""
-        raise NotImplementedError
-
-    def generate(self, prompt: str) -> str:
-        """生成文本"""
-        raise NotImplementedError
-
-
-class OllamaLLM(BaseLLM):
+class OllamaLLM(BaseLanguageModel):
     """Ollama本地LLM"""
 
-    def __init__(
+    model_name: str = Field(default="qwen2.5:14b", alias="model_name")
+    base_url: str = Field(default="http://localhost:11434")
+    temperature: float = Field(default=0.6)
+    max_tokens: int = Field(default=1000)
+    top_p: float = Field(default=0.95)
+    streaming: bool = Field(default=False)
+
+    def __init__(self, **data):
+        # 处理别名
+        if "model" in data:
+            data["model_name"] = data.pop("model")
+        super().__init__(**data)
+        self._client = None
+
+    def _get_client(self):
+        if self._client is None:
+            from langchain_community.chat_models import ChatOllama
+            self._client = ChatOllama(
+                model=self.model_name,
+                base_url=self.base_url,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                top_p=self.top_p,
+                streaming=self.streaming
+            )
+        return self._client
+
+    def _call(
         self,
-        model_name: str = "qwen2:0.5b",
-        base_url: str = "http://localhost:11434",
-        temperature: float = 0.6,
-        max_tokens: int = 1000,
-        top_p: float = 0.95,
-        streaming: bool = False
-    ):
-        """
-        初始化Ollama LLM
+        prompt: str,
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[CallbackManagerForLLMRun] = None,
+        **kwargs
+    ) -> str:
+        client = self._get_client()
+        response = client.invoke(prompt)
+        return response if isinstance(response, str) else response.content
 
-        Args:
-            model_name: 模型名称
-            base_url: Ollama服务地址
-            temperature: 温度参数
-            max_tokens: 最大token数
-            top_p: top_p采样参数
-            streaming: 是否启用流式输出
-        """
-        self.model_name = model_name
-        self.llm = ChatOllama(
-            model=model_name,
-            base_url=base_url,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            top_p=top_p,
-            streaming=streaming
-        )
-        logger.info(f"初始化Ollama LLM: {model_name}")
+    def _generate(
+        self,
+        prompts: List[str],
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[CallbackManagerForLLMRun] = None,
+        **kwargs
+    ) -> ChatResult:
+        client = self._get_client()
+        results = []
+        for prompt in prompts:
+            response = client.invoke(prompt)
+            content = response if isinstance(response, str) else response.content
+            results.append(ChatGeneration(text=content))
+        return ChatResult(generations=results)
 
-    def invoke(self, messages: List[BaseMessage]) -> str:
-        """调用LLM"""
-        return self.llm.invoke(messages).content
+    def invoke(self, input: Union[str, List[BaseMessage]], config=None, **kwargs) -> BaseMessage:
+        client = self._get_client()
+        if config is not None:
+            return client.invoke(input, config=config, **kwargs)
+        return client.invoke(input, **kwargs)
 
-    def generate(self, prompt: str) -> str:
-        """生成文本"""
-        messages = [HumanMessage(content=prompt)]
-        return self.invoke(messages)
+    def batch(self, inputs: List, **kwargs) -> List:
+        return [self.invoke(inp, **kwargs) for inp in inputs]
+
+    def generate_prompt(self, prompts: List[str], **kwargs) -> ChatResult:
+        return self._generate(prompts, **kwargs)
+
+    async def agenerate_prompt(self, prompts: List[str], **kwargs) -> ChatResult:
+        return self.generate_prompt(prompts, **kwargs)
+
+    @property
+    def _llm_type(self) -> str:
+        return "ollama_llm"
 
 
-class OpenAILLM(BaseLLM):
+class OpenAILLM(BaseLanguageModel):
     """OpenAI云端LLM"""
 
-    def __init__(
+    model_name: str = Field(default="gpt-4-turbo", alias="model_name")
+    api_key: Optional[str] = Field(default=None)
+    temperature: float = Field(default=0.2)
+    max_tokens: int = Field(default=1000)
+    streaming: bool = Field(default=False)
+
+    def __init__(self, **data):
+        if "model" in data:
+            data["model_name"] = data.pop("model")
+        super().__init__(**data)
+        self._client = None
+
+    def _get_client(self):
+        if self._client is None:
+            from langchain_openai import ChatOpenAI
+            self._client = ChatOpenAI(
+                model=self.model_name,
+                api_key=self.api_key,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                streaming=self.streaming
+            )
+        return self._client
+
+    def _call(
         self,
-        model_name: str = "gpt-4-turbo",
-        api_key: Optional[str] = None,
-        temperature: float = 0.2,
-        max_tokens: int = 1000,
-        streaming: bool = False,
-        callbacks: Optional[List] = None
-    ):
-        """
-        初始化OpenAI LLM
+        prompt: str,
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[CallbackManagerForLLMRun] = None,
+        **kwargs
+    ) -> str:
+        client = self._get_client()
+        response = client.invoke(prompt)
+        return response if isinstance(response, str) else response.content
 
-        Args:
-            model_name: 模型名称
-            api_key: API密钥
-            temperature: 温度参数
-            max_tokens: 最大token数
-            streaming: 是否启用流式输出
-            callbacks: 回调函数列表
-        """
-        self.model_name = model_name
-        self.llm = ChatOpenAI(
-            model=model_name,
-            api_key=api_key,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            streaming=streaming,
-            callbacks=callbacks or []
-        )
-        logger.info(f"初始化OpenAI LLM: {model_name}")
+    def _generate(
+        self,
+        prompts: List[str],
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[CallbackManagerForLLMRun] = None,
+        **kwargs
+    ) -> ChatResult:
+        client = self._get_client()
+        results = []
+        for prompt in prompts:
+            response = client.invoke(prompt)
+            content = response if isinstance(response, str) else response.content
+            results.append(ChatGeneration(text=content))
+        return ChatResult(generations=results)
 
-    def invoke(self, messages: List[BaseMessage]) -> str:
-        """调用LLM"""
-        return self.llm.invoke(messages).content
+    def invoke(self, input: Union[str, List[BaseMessage]], config=None, **kwargs) -> BaseMessage:
+        client = self._get_client()
+        if config is not None:
+            return client.invoke(input, config=config, **kwargs)
+        return client.invoke(input, **kwargs)
 
-    def generate(self, prompt: str) -> str:
-        """生成文本"""
-        messages = [HumanMessage(content=prompt)]
-        return self.invoke(messages)
+    def batch(self, inputs: List, **kwargs) -> List:
+        return [self.invoke(inp, **kwargs) for inp in inputs]
+
+    def generate_prompt(self, prompts: List[str], **kwargs) -> ChatResult:
+        return self._generate(prompts, **kwargs)
+
+    async def agenerate_prompt(self, prompts: List[str], **kwargs) -> ChatResult:
+        return self.generate_prompt(prompts, **kwargs)
+
+    @property
+    def _llm_type(self) -> str:
+        return "openai_llm"
 
 
 class LLMFactory:
     """LLM工厂类"""
 
     @staticmethod
-    def create_llm(
-        llm_type: str = "ollama",
-        **kwargs
-    ) -> BaseLLM:
-        """
-        创建LLM实例
-
-        Args:
-            llm_type: LLM类型 ("ollama", "openai")
-            **kwargs: 其他参数
-
-        Returns:
-            LLM实例
-        """
+    def create_llm(llm_type: str = "ollama", **kwargs):
         if llm_type == "ollama":
             return OllamaLLM(
                 model_name=kwargs.get("model_name", "qwen2:0.5b"),
                 base_url=kwargs.get("base_url", "http://localhost:11434"),
                 temperature=kwargs.get("temperature", 0.6),
-                max_tokens=kwargs.get("max_tokens", 1000),
-                streaming=kwargs.get("streaming", False)
+                max_tokens=kwargs.get("max_tokens", 1000)
             )
         elif llm_type == "openai":
             return OpenAILLM(
                 model_name=kwargs.get("model_name", "gpt-4-turbo"),
                 api_key=kwargs.get("api_key"),
                 temperature=kwargs.get("temperature", 0.2),
-                max_tokens=kwargs.get("max_tokens", 1000),
-                streaming=kwargs.get("streaming", False),
-                callbacks=kwargs.get("callbacks", [])
+                max_tokens=kwargs.get("max_tokens", 1000)
             )
         else:
             raise ValueError(f"不支持的LLM类型: {llm_type}")

@@ -78,7 +78,11 @@ class VectorRetriever(BaseRetriever):
 
     def get_relevant_documents(self, query: str) -> List[Document]:
         """获取相关文档"""
-        return self.retriever.get_relevant_documents(query)
+        return self.retriever.invoke(query)
+
+    def invoke(self, query: str) -> List[Document]:
+        """获取相关文档（invoke方法）"""
+        return self.retriever.invoke(query)
 
 
 class BM25RetrieverWrapper(BaseRetriever):
@@ -146,6 +150,10 @@ class EnsembleRetrieverWrapper(BaseRetriever):
 
     def get_relevant_documents(self, query: str) -> List[Document]:
         """获取相关文档"""
+        return self.retriever.get_relevant_documents(query)
+
+    def invoke(self, query: str) -> List[Document]:
+        """获取相关文档（invoke方法）"""
         return self.retriever.get_relevant_documents(query)
 
 
