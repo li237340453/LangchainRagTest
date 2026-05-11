@@ -13,7 +13,10 @@ sys.path.insert(0, str(Path(__file__).parent))
 from src.config import (
     DATA_DIR, INDEX_DIR, EMBEDDING_MODEL, EMBEDDING_DEVICE,
     CHUNK_SIZE, CHUNK_OVERLAP, LLM_MODEL_NAME, LLM_BASE_URL,
-    LLM_TEMPERATURE, DEFAULT_TOP_K, API_HOST, API_PORT
+    LLM_API_KEY, LLM_TEMPERATURE, SILICONFLOW_API_KEY,
+    SILICONFLOW_MODEL_NAME, SILICONFLOW_BASE_URL,
+    SILICONFLOW_EMBEDDING_MODEL,
+    DEFAULT_TOP_K, API_HOST, API_PORT
 )
 from src.document_loader import DocumentLoader
 from src.text_processor import DocumentProcessor
@@ -67,19 +70,32 @@ class RAGSystem:
         logger.info(f"共加载 {len(self.documents)} 个文档")
         return self
 
-    def build_index(self, index_dir: Path = None, force_rebuild: bool = False):
+    def build_index(self, index_dir: Path = None, force_rebuild: bool = False,
+                    embedding_type: str = "siliconflow", api_key: str = None):
         """构建向量索引"""
         if index_dir is None:
             index_dir = INDEX_DIR
 
         index_path = index_dir / "faiss_index"
 
+        # 获取API密钥
+        api_key = api_key or SILICONFLOW_API_KEY
+
+        # 获取模型名称
+        if embedding_type == "siliconflow":
+            embedding_model = SILICONFLOW_EMBEDDING_MODEL
+        else:
+            embedding_model = EMBEDDING_MODEL
+
         # 检查是否已有索引
         if index_path.exists() and not force_rebuild:
             logger.info(f"从本地加载索引: {index_path}")
             self.vector_store = VectorStore(
-                model_name=EMBEDDING_MODEL,
-                device=EMBEDDING_DEVICE
+                model_name=embedding_model,
+                device=EMBEDDING_DEVICE,
+                embedding_type=embedding_type,
+                api_key=api_key,
+                base_url=SILICONFLOW_BASE_URL
             )
             self.vector_store.load_index(str(index_path))
         else:
@@ -99,8 +115,11 @@ class RAGSystem:
 
             # 创建向量索引
             self.vector_store = VectorStore(
-                model_name=EMBEDDING_MODEL,
-                device=EMBEDDING_DEVICE
+                model_name=embedding_model,
+                device=EMBEDDING_DEVICE,
+                embedding_type=embedding_type,
+                api_key=api_key,
+                base_url=SILICONFLOW_BASE_URL
             )
             self.vector_store.create_index(chunks)
 
@@ -128,14 +147,27 @@ class RAGSystem:
         logger.info(f"检索器已设置: {retriever_type}, k={k}")
         return self
 
-    def setup_llm(self, llm_type: str = "ollama"):
+    def setup_llm(self, llm_type: str = "siliconflow", api_key: str = None):
         """设置LLM"""
-        self.llm = LLMFactory.create_llm(
-            llm_type=llm_type,
-            model_name=LLM_MODEL_NAME,
-            base_url=LLM_BASE_URL,
-            temperature=LLM_TEMPERATURE
-        )
+        # 硅基流动配置
+        if llm_type == "siliconflow":
+            api_key = api_key or SILICONFLOW_API_KEY
+            if not api_key:
+                logger.error("使用硅基流动需要提供API密钥，请设置SILICONFLOW_API_KEY或--api-key参数")
+                return self
+            self.llm = LLMFactory.create_siliconflow_llm(
+                api_key=api_key,
+                model_name=SILICONFLOW_MODEL_NAME,
+                temperature=LLM_TEMPERATURE
+            )
+        else:
+            self.llm = LLMFactory.create_llm(
+                llm_type=llm_type,
+                model_name=LLM_MODEL_NAME,
+                base_url=LLM_BASE_URL,
+                temperature=LLM_TEMPERATURE,
+                api_key=api_key
+            )
         logger.info(f"LLM已设置: {llm_type}")
         return self
 
@@ -212,7 +244,10 @@ def main():
     parser.add_argument("--data-dir", type=str, default=None, help="数据目录路径")
     parser.add_argument("--index-dir", type=str, default=None, help="索引保存目录")
     parser.add_argument("--rebuild-index", action="store_true", help="强制重建索引")
-    parser.add_argument("--llm-type", choices=["ollama", "openai"], default="ollama", help="LLM类型")
+    parser.add_argument("--llm-type", choices=["ollama", "openai", "siliconflow"], default="siliconflow", help="LLM类型")
+    parser.add_argument("--embedding-type", choices=["huggingface", "siliconflow"], default="siliconflow",
+                        help="Embedding类型: huggingface(本地) 或 siliconflow(云端)")
+    parser.add_argument("--api-key", type=str, default=None, help="API密钥 (硅基流动或OpenAI)")
     parser.add_argument("--retriever-type", choices=["vector", "bm25", "ensemble"], default="vector",
                         help="检索器类型")
     parser.add_argument("--k", type=int, default=DEFAULT_TOP_K, help="检索返回数量")
@@ -237,13 +272,14 @@ def main():
             sys.exit(1)
 
         # 构建索引
-        rag_system.build_index(index_dir, force_rebuild=args.rebuild_index)
+        rag_system.build_index(index_dir, force_rebuild=args.rebuild_index,
+                               embedding_type=args.embedding_type, api_key=args.api_key)
 
         # 设置检索器
         rag_system.setup_retriever(retriever_type=args.retriever_type, k=args.k)
 
         # 设置LLM
-        rag_system.setup_llm(llm_type=args.llm_type)
+        rag_system.setup_llm(llm_type=args.llm_type, api_key=args.api_key)
 
         if args.mode == "interactive":
             # 构建RAG链
@@ -260,9 +296,10 @@ def main():
         index_dir = Path(args.index_dir) if args.index_dir else INDEX_DIR
 
         rag_system.load_documents(data_dir)
-        rag_system.build_index(index_dir, force_rebuild=args.rebuild_index)
+        rag_system.build_index(index_dir, force_rebuild=args.rebuild_index,
+                               embedding_type=args.embedding_type, api_key=args.api_key)
         rag_system.setup_retriever(retriever_type=args.retriever_type, k=args.k)
-        rag_system.setup_llm(llm_type=args.llm_type)
+        rag_system.setup_llm(llm_type=args.llm_type, api_key=args.api_key)
         rag_system.build_chain()
 
         # 设置全局RAG链

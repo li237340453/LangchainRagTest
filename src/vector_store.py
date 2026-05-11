@@ -1,8 +1,9 @@
 """向量存储模块 - 使用FAISS进行向量索引和存储"""
-from typing import List, Optional
+from typing import List, Optional, Union
 from langchain_core.documents import Document
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceBgeEmbeddings
+from langchain_openai import OpenAIEmbeddings
 import logging
 import os
 
@@ -16,7 +17,10 @@ class VectorStore:
         self,
         model_name: str = "BAAI/bge-large-zh-v1.5",
         device: str = "cpu",
-        encode_kwargs: dict = None
+        encode_kwargs: dict = None,
+        embedding_type: str = "huggingface",
+        api_key: str = None,
+        base_url: str = None
     ):
         """
         初始化向量存储
@@ -25,33 +29,63 @@ class VectorStore:
             model_name: Embedding模型名称
             device: 设备类型 ("cpu" 或 "cuda")
             encode_kwargs: 编码参数
+            embedding_type: Embedding类型 ("huggingface" 或 "siliconflow")
+            api_key: API密钥 (用于siliconflow)
+            base_url: API基础URL (用于siliconflow)
         """
-        if encode_kwargs is None:
-            encode_kwargs = {"batch_size": 32, "show_progress_bar": False}
+        if embedding_type == "siliconflow":
+            # 使用SiliconFlow Embedding API (OpenAI兼容)
+            if base_url is None:
+                base_url = "https://api.siliconflow.cn/v1"
+            self.embeddings = OpenAIEmbeddings(
+                model=model_name,
+                api_key=api_key,
+                base_url=base_url
+            )
+            self.embedding_type = "siliconflow"
+            logger.info(f"初始化SiliconFlow Embedding模型: {model_name}")
+        else:
+            # 使用HuggingFace本地模型
+            if encode_kwargs is None:
+                encode_kwargs = {"batch_size": 32, "show_progress_bar": False}
+            self.embeddings = HuggingFaceBgeEmbeddings(
+                model_name=model_name,
+                model_kwargs={"device": device},
+                encode_kwargs=encode_kwargs
+            )
+            self.embedding_type = "huggingface"
+            logger.info(f"初始化HuggingFace Embedding模型: {model_name} on {device}")
 
-        self.embeddings = HuggingFaceBgeEmbeddings(
-            model_name=model_name,
-            model_kwargs={"device": device},
-            encode_kwargs=encode_kwargs
-        )
         self.vector_db = None
-        logger.info(f"初始化Embedding模型: {model_name} on {device}")
 
-    def create_index(self, documents: List[Document], index_name: str = "faiss_index") -> FAISS:
+    def create_index(self, documents: List[Document], index_name: str = "faiss_index", batch_size: int = 32) -> FAISS:
         """
         从文档创建向量索引
 
         Args:
             documents: 文档列表
             index_name: 索引名称（用于保存）
+            batch_size: 批处理大小（SiliconFlow限制最大32）
 
         Returns:
             FAISS向量数据库对象
         """
-        self.vector_db = FAISS.from_documents(
-            documents=documents,
-            embedding=self.embeddings
-        )
+        if self.embedding_type == "siliconflow":
+            # SiliconFlow API: 分批创建索引再合并
+            first_batch = documents[:batch_size]
+            self.vector_db = FAISS.from_documents(documents=first_batch, embedding=self.embeddings)
+            logger.info(f"已处理 {len(first_batch)}/{len(documents)} 个文档块")
+            
+            for i in range(batch_size, len(documents), batch_size):
+                batch = documents[i:i + batch_size]
+                batch_db = FAISS.from_documents(documents=batch, embedding=self.embeddings)
+                self.vector_db.merge_from(batch_db)
+                logger.info(f"已处理 {min(i + batch_size, len(documents))}/{len(documents)} 个文档块")
+        else:
+            self.vector_db = FAISS.from_documents(
+                documents=documents,
+                embedding=self.embeddings
+            )
         logger.info(f"创建向量索引，包含{len(documents)}个文档块")
         return self.vector_db
 

@@ -52,8 +52,8 @@ class TextSplitter:
 
     def __init__(
         self,
-        chunk_size: int = 500,
-        chunk_overlap: int = 50,
+        chunk_size: int = 150,
+        chunk_overlap: int = 30,
         length_function: callable = len
     ):
         """
